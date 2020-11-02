@@ -1,109 +1,54 @@
-# Weaver
+# libbpf-build-template
 
-<b>PLEASE READ!</b> - I am currently refactoring Weaver to use libbpf instead of bcc which would include various other major improvements. If you're currently using weaver please be aware that features/bug fixes are being held off until the major refactor occurs. This will be tracked in the branch "libbpf-refactor"
+This repository serves as a template to help eBPF developers build tools written using libbpf. It has been pulled out of [bcc](github.com/iovisor/bcc) for the sake of simplicity. 
 
-<p align="center">
-    <img src="DrManhattanGopher.png" alt="gopher" width="200"/>
-</p>
+## How to use this template
 
+- Generate your own `vmlinux.h` file:
+    - `bpftool btf dump file /sys/kernel/btf/vmlinux format c > tools/vmlinux.h`
 
-Weaver is a CLI tool that allows you to trace Go programs in order to inspect what values are passed to specified functions. It leverages eBPF attached to uprobes.
+- Place your bpf code in a file called `tools/<name>.bpf.c` extension. 
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/grantseltzer/weaver)](https://goreportcard.com/report/github.com/grantseltzer/weaver)
+- Place your userspace code in a file called `tools/<name>.c`
 
+- Include `<name>.skel.h` in your userspace code.
 
-## Quick Start 
+- Include `vmlinux.h` in your bpf code.
 
-There are two modes of operation, one that uses a 'functions file', and one that extracts a symbol table from a passed binary and filters by Go packages. More information on functionality in [docs](/docs).
+- Add `<name>` to `'APPS'` in `Makefile`.
 
-### Functions file
+- `make` from tools.
 
-Take the following example program: 
+- Your compiled binary will be compiled and placed in `tools`.
 
-<i>test_prog.go</i>
-```go
-package main
+- Follow `tools/example.*` if you get confused.
 
-//go:noinline
-func test_function(int, [2]int) {}
+## How this build works
 
-//go:noinline
-func other_test_function(rune, int64) {}
+The Makefile is complicated if you're not familiar with GNU Make. Here's a breakdown of what it's doing:
 
-func main() {
-	test_function(3, [2]int{1, 2})
-	other_test_function('a', 33)
-}
-```
+- Goes into `src/cc/libbpf` (loaded as a git submodule)
 
-Let's say we want to know what values are passed to `test_function` and `other_test_function` whenever the program is run. Once the program is compiled (`make`) we just have to create a file which specifies each function to trace:
+- Creates `tools/.output/libbpf/staticobjs`
 
-<i>functions_to_trace.txt</i>
-```
-main.test_function(int, [2]int)
-main.other_test_function(rune, int64)
-```
+- Creates a handful of static objects from libbpf.
 
-Notice that we have to specify the parameter data types. <i>(You can use `weaver --types` to see what data types are supported.)</i>
+- Creates an archive of all those static objects called `libbpf.a`
 
-Now we can call `weaver` like so:
+- Installs libbpf header files to `tools/.output/bpf`
 
-```
-sudo weaver -f /path/to/functions_to_trace.txt /path/to/test-prog-binary
-```
+- Installs the libbpf package config file to `tools/.output/libbpf/libbpf.pc`
 
-Weaver will then sit idle without any output until `test-prog` is run and the `test_function` and `other_test_function` functions are called. This will also work on an already running Go Program.
+- Compiles bpf code to an object file using clang
+`clang -g -O2 -target bpf -D__TARGET_ARCH_x86 -I.output -c example.bpf.c -o .output/example.bpf.o`
 
-```
-{"functionName":"main.other_test_function","args":[{"type":"RUNE","value":"a"},{"type":"INT64","value":"33"}],"procInfo":{"pid":43300,"ppid":42754,"comm":"test-prog-binar"}}
-{"functionName":"main.test_function","args":[{"type":"INT","value":"3"},{"type":"INT_ARRAY","value":"1, 2"}],"procInfo":{"pid":43300,"ppid":42754,"comm":"test-prog-binar"}}
-```
+- Generates a skeleton of the bpf object file
+`bin/bpftool gen skeleton .output/example.bpf.o > .output/example.skel.h`
 
-### Package mode
+- Compiles helper function object files with gcc
 
-For the same example Go program as above, you can choose to not specify a functions file. The command would like like this:
+- Compiles your bpf userspace code and links it against the helper function object files
 
-```
-sudo weaver /path/to/test-prog-binary
-```
+## Further reading
 
-This will default to only tracing functions in the `main` package, however you can use the `--packages` flag to specify a comma seperated list of packages (typially of the form `github.com/x/y`)
-
-Output does include argument vlaues in this mode.
-
-```
-{"functionName":"main.main","procInfo":{"pid":44411,"ppid":42754,"comm":"test-prog-binar"}}
-{"functionName":"main.test_function","procInfo":{"pid":44411,"ppid":42754,"comm":"test-prog-binar"}}
-```
-
-## Note on supported types
-
-Currently weaver supports basic data types but getting support for user defined types is a high priority. Getting following types defined are a work in progress:
-
-- user/stdlib defined structs
-- user/stdlib defined interfaces
-
-
-## System Dependencies
-
-- [bcc](https://github.com/iovisor/bcc/blob/master/INSTALL.md) / bcc-devel
-- linux kernel version > 4.14 (please make bug reports if your kernel version doesn't work)
-
-## Build
-
-`make` will compile the weaver binary to `bin/weaver` (It also creates the smoke test binary and print-stack utility)
-
-<i>Can't build? Please make an issue!</i>
-
-## Roadmap
-
-Check issues for tasks currently being tracked. Please open bug reports, i'm sure there are plenty :-)
-
-Short term goals include:
-
-- Testing
-- Output options
-- Inspecting binaries for parameter data types instead of specifying them with a functions file
-- CI/CD infrastructre 
-
-<i>image modified version of art by Ashley McNamara ([license](https://creativecommons.org/licenses/by-nc-sa/4.0/)) based on art by Renee French.</i>
+[BPF Portability and CO-RE](https://nakryiko.com/posts/bpf-portability-and-co-re/) by Andrii Nakryiko
