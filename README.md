@@ -1,100 +1,54 @@
-# Weaver
+# libbpf-build-template
 
-<p align="center">
-    <img src="DrManhattanGopher.png" alt="gopher" width="200"/>
-</p>
+This repository serves as a template to help eBPF developers build tools written using libbpf. It has been pulled out of [bcc](github.com/iovisor/bcc) for the sake of simplicity. 
 
+## How to use this template
 
-Weaver is a CLI tool that allows you to trace Go programs in order to inspect what values are passed to specified functions. It leverages eBPF attached to uprobes.
+- Generate your own `vmlinux.h` file:
+    - `bpftool btf dump file /sys/kernel/btf/vmlinux format c > tools/vmlinux.h`
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/grantseltzer/weaver)](https://goreportcard.com/report/github.com/grantseltzer/weaver)
+- Place your bpf code in a file called `tools/<name>.bpf.c` extension. 
 
+- Place your userspace code in a file called `tools/<name>.c`
 
-## Quick Start 
+- Include `<name>.skel.h` in your userspace code.
 
-Take the following example program: 
+- Include `vmlinux.h` in your bpf code.
 
-<i>test_prog.go</i>
-```go
-package main
+- Add `<name>` to `'APPS'` in `Makefile`.
 
-//go:noinline
-func test_function(int, [2]int) {}
+- `make` from tools.
 
-//go:noinline
-func other_test_function(rune, int64) {}
+- Your compiled binary will be compiled and placed in `tools`.
 
-func main() {
-	test_function(3, [2]int{1, 2})
-	other_test_function('a', 33)
-}
+- Follow `tools/example.*` if you get confused.
 
-```
+## How this build works
 
-Let's say we want to know what values are passed to `test_function` and `other_test_function` whenever the program is run. Once the program is compiled (`make`) we just have to create a file which specifies each function to trace:
+The Makefile is complicated if you're not familiar with GNU Make. Here's a breakdown of what it's doing:
 
-<i>functions_to_trace.txt</i>
-```
-main.test_function(int, [2]int)
-main.other_test_function(rune, int64)
-```
+- Goes into `src/cc/libbpf` (loaded as a git submodule)
 
-Notice that we have to specify the parameter data types. <i>(You can use `weaver --types` to see what data types are supported.)</i>
+- Creates `tools/.output/libbpf/staticobjs`
 
-Now we can call `weaver` like so:
+- Creates a handful of static objects from libbpf.
 
-```
-sudo weaver -f /path/to/functions_to_trace.txt /path/to/test-prog-binary
-```
+- Creates an archive of all those static objects called `libbpf.a`
 
-Weaver will then sit idle without any output until `test-prog` is run and the `test_function` and `other_test_function` functions are called. This will also work on an already running Go Program.
+- Installs libbpf header files to `tools/.output/bpf`
 
-```
-+--------------------+--------------+-----------+-------+
-|   FUNCTION NAME    | ARG POSITION |   TYPE    | VALUE |
-+--------------------+--------------+-----------+-------+
-| main.test_function | 0            | INT       | 3     |
-| main.test_function | 1            | INT_ARRAY | 1, 2  |
-+--------------------+--------------+-----------+-------+
-+--------------------------+--------------+-------+-------+
-|      FUNCTION NAME       | ARG POSITION | TYPE  | VALUE |
-+--------------------------+--------------+-------+-------+
-| main.other_test_function | 0            | RUNE  | a     |
-| main.other_test_function | 1            | INT64 | 33    |
-+--------------------------+--------------+-------+-------+
-```
+- Installs the libbpf package config file to `tools/.output/libbpf/libbpf.pc`
 
-## Note on supported types
+- Compiles bpf code to an object file using clang
+`clang -g -O2 -target bpf -D__TARGET_ARCH_x86 -I.output -c example.bpf.c -o .output/example.bpf.o`
 
-Currently weaver supports basic data types but getting support for user defined types is a high priority. Getting following types defined are also a work in progress:
+- Generates a skeleton of the bpf object file
+`bin/bpftool gen skeleton .output/example.bpf.o > .output/example.skel.h`
 
-- arbitrary pointers
-- slices
-- user/stdlib defined structs
-- user/stdlib defined interfaces
+- Compiles helper function object files with gcc
 
+- Compiles your bpf userspace code and links it against the helper function object files
 
-## Dependencies
+## Further reading
 
-- [bcc](https://github.com/iovisor/bcc/blob/master/INSTALL.md)
-- linux kernel version > 4.14 (please make bug reports if your kernel version doesn't work)
-
-## Build
-
-`make weaver` will compile the weaver binary to `bin/weaver`
-
-<i>Can't build? Please make an issue!</i>
-
-## Roadmap
-
-Check issues for tasks currently being tracked. Please open bug reports, i'm sure there are plenty :-)
-
-Short term goals include:
-
-- Testing
-- Output options
-- Deep pointer inspection
-- Inspecting binaries for parameter data types instead of specifying them at the command line
-- CI/CD infrastructre 
-
-<i>image modified version of art by Ashley McNamara ([license](https://creativecommons.org/licenses/by-nc-sa/4.0/)) based on art by Renee French.</i>
+[BPF Portability and CO-RE](https://nakryiko.com/posts/bpf-portability-and-co-re/) by Andrii Nakryiko
